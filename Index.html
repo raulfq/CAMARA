@@ -1,1 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Escáner QR — Inventario</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #0f172a; color: #e2e8f0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+    main { min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 12px; }
+    #lector { width: 100%; max-width: 480px; border-radius: 12px; overflow: hidden; background: #000; }
+    #lector video { width: 100% !important; height: auto !important; }
+    #estado { margin: 0; font-size: 14px; text-align: center; max-width: 480px; }
+    #estado.error { color: #fda4af; }
+    button { padding: 10px 18px; border: 0; border-radius: 10px; background: #4f46e5; color: #fff; font-size: 14px; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <main>
+    <div id="lector"></div>
+    <p id="estado">Iniciando cámara...</p>
+    <button id="reintentar" hidden>Reintentar</button>
+  </main>
 
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script>
+    /* =========================================================
+       Escáner QR (Netlify) — dos modos:
+       - ?embed=1  -> dentro del modal de la app: envía el código con postMessage
+       - sin param -> pestaña propia: abre directo la ficha en la app de Apps Script
+       ========================================================= */
+
+    // URL de tu app (termina en /exec). Solo se usa si el QR trae únicamente el código (ej. ACT-0001).
+    const URL_APP = '';
+
+    // Por seguridad, en modo pestaña solo se redirige a estos dominios.
+    const HOSTS_PERMITIDOS = ['script.google.com'];
+
+    const EMBEBIDO = new URLSearchParams(location.search).get('embed') === '1';
+    const $ = id => document.getElementById(id);
+    let lector = null;
+    let leido = false;
+
+    function estado(texto, error) {
+      $('estado').textContent = texto;
+      $('estado').className = error ? 'error' : '';
+    }
+
+    function enviarAlPadre(mensaje) {
+      // '*' porque el origen del iframe de Apps Script cambia; solo viaja el texto leído
+      window.parent.postMessage(mensaje, '*');
+    }
+
+    function destinoSeguro(texto) {
+      try {
+        const url = new URL(texto);
+        if (url.protocol === 'https:' && HOSTS_PERMITIDOS.indexOf(url.hostname) !== -1) return url.href;
+      } catch (e) { /* no es una URL */ }
+      if (URL_APP && /^[A-Za-z0-9._-]{1,40}$/.test(texto)) return URL_APP + '?codigo=' + encodeURIComponent(texto);
+      return null;
+    }
+
+    async function detener() {
+      if (!lector) return;
+      try { await lector.stop(); lector.clear(); } catch (e) { /* ya estaba detenido */ }
+    }
+
+    async function alLeer(texto) {
+      if (leido) return;
+      leido = true;
+      await detener();
+      if (EMBEBIDO) { enviarAlPadre({ tipo: 'qr', codigo: texto }); return; }
+      const destino = destinoSeguro(texto);
+      if (destino) {
+        estado('QR leído. Abriendo la ficha...');
+        location.href = destino;
+      } else {
+        estado('QR leído, pero no es de tu inventario: ' + texto, true);
+        leido = false;
+        $('reintentar').hidden = false;
+      }
+    }
+
+    async function iniciar() {
+      $('reintentar').hidden = true;
+      estado('Iniciando cámara...');
+      try {
+        lector = lector || new Html5Qrcode('lector');
+        await lector.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: (w, h) => { const l = Math.floor(Math.min(w, h) * 0.7); return { width: l, height: l }; } },
+          alLeer,
+          () => {}
+        );
+        estado('Apunta al código QR');
+        if (EMBEBIDO) enviarAlPadre({ tipo: 'listo' });
+      } catch (error) {
+        const mensaje = String(error && error.message ? error.message : error);
+        estado('No se pudo abrir la cámara: ' + mensaje, true);
+        if (EMBEBIDO) enviarAlPadre({ tipo: 'error', mensaje: mensaje });
+        else $('reintentar').hidden = false;
+      }
+    }
+
+    $('reintentar').addEventListener('click', () => { leido = false; iniciar(); });
+    window.addEventListener('load', iniciar); // arranca sola, sin botón
+  </script>
+</body>
+</html>
